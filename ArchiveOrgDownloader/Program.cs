@@ -175,44 +175,133 @@ class Program
         progress.Percentage = percentage;
         progress.TotalSize = totalSize;
         progress.DownloadedSize = downloadedSize;
+
+        if (percentage >= 100)
+            progress.IsCompleted = true;
     }
+
+    static (List<Progress>, List<Progress>, List<Progress>) CategorizeDownloads()
+    {
+        var completed = new List<Progress>();
+        var inProgress = new List<Progress>();
+        var errored = new List<Progress>();
+
+        foreach (var progress in downloadProgress.Values)
+        {
+            if (progress.IsCompleted)
+                completed.Add(progress);
+            else if (progress.HasError)
+                errored.Add(progress);
+            else
+                inProgress.Add(progress);
+        }
+
+        return (completed, inProgress, errored);
+    }
+
 
     static void DrawProgress()
     {
         Console.Clear();
-        foreach (var progress in downloadProgress.Values)
+        var (completed, inProgress, errored) = CategorizeDownloads();
+
+        var table = new Table().Expand().NoBorder();
+        table.AddColumn("Completed Downloads");
+        table.AddColumn("Downloads in Progress");
+
+        table.AddRow(
+            new Panel(GetCompletedDownloadsText(completed)).Expand(),
+            new Panel(GetInProgressDownloadsText(inProgress)).Expand()
+        );
+
+        AnsiConsole.Write(table);
+
+        if (errored.Count > 0)
         {
-            string progressText;
-            if (progress.Percentage >= 0)
-            {
-                string downloadedSize = FormatFileSize(progress.DownloadedSize);
-                string totalSize = FormatFileSize(progress.TotalSize);
-                progressText = $"{progress.Percentage:F2}% ({downloadedSize} / {totalSize})";
-            }
-            else
-            {
-                string downloadedSize = FormatFileSize(progress.DownloadedSize);
-                progressText = $"In progress ({downloadedSize} downloaded)";
-            }
-
-            AnsiConsole.MarkupLine("[bold]" + Markup.Escape($"{progress.FileName}") + $"[/]: {progressText}");
-
-            if (progress.Percentage >= 0)
-            {
-                AnsiConsole.Progress()
-                    .HideCompleted(false)
-                    .Start(ctx =>
-                    {
-                        var task = ctx.AddTask("[green]Downloading[/]");
-                        task.Value = progress.Percentage;
-                    });
-            }
-            else
-            {
-                AnsiConsole.MarkupLine("[green]Downloading...[/]");
-            }
+            AnsiConsole.WriteLine();
+            DisplayErroredDownloads(errored);
         }
     }
+
+    static string GetCompletedDownloadsText(List<Progress> completed)
+    {
+        var text = new System.Text.StringBuilder();
+        int displayCount = Math.Min(completed.Count, 20);
+
+        for (int i = 0; i < displayCount; i++)
+        {
+            var item = completed[i];
+            string downloadedSize = FormatFileSize(item.DownloadedSize);
+            text.AppendLine($"[green]■[/] {Markup.Escape(item.FileName)} ({downloadedSize})");
+        }
+
+        if (completed.Count > 20)
+        {
+            text.AppendLine($"[grey]...and {completed.Count - 20} more[/]");
+        }
+
+        return text.Length > 0 ? text.ToString() : "No completed downloads yet.";
+    }
+
+    static string GetInProgressDownloadsText(List<Progress> inProgress)
+    {
+        var text = new System.Text.StringBuilder();
+
+        foreach (var item in inProgress)
+        {
+            string downloadedSize = FormatFileSize(item.DownloadedSize);
+            string totalSize = FormatFileSize(item.TotalSize);
+            string progressText = item.Percentage >= 0
+                ? $"{item.Percentage:F2}% ({downloadedSize} / {totalSize})"
+                : $"In progress ({downloadedSize} downloaded)";
+
+            text.AppendLine(Markup.Escape($"{item.FileName}: {progressText}"));
+
+            if (item.Percentage >= 0)
+            {
+                text.AppendLine(CreateProgressBar(item.Percentage));
+            }
+            else
+            {
+                text.AppendLine("[yellow]⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯[/]");
+            }
+
+            text.AppendLine();
+        }
+
+        return text.Length > 0 ? text.ToString() : "No downloads in progress.";
+    }
+
+    static string CreateProgressBar(double percentage)
+    {
+        int width = 20;
+        int filledWidth = (int)Math.Round(percentage / 100 * width);
+        int emptyWidth = width - filledWidth;
+
+        return $"[green]{new string('█', filledWidth)}[/][grey]{new string('░', emptyWidth)}[/]";
+    }
+
+    static void DisplayErroredDownloads(List<Progress> errored)
+    {
+        var panel = new Panel(GetErroredDownloadsText(errored))
+            .Header("Errored Downloads")
+            .Expand();
+
+        AnsiConsole.Write(panel);
+    }
+
+    static string GetErroredDownloadsText(List<Progress> errored)
+    {
+        var text = new System.Text.StringBuilder();
+
+        foreach (var item in errored)
+        {
+            text.AppendLine($"[red]■[/] {Markup.Escape(item.FileName)}");
+        }
+
+        return text.Length > 0 ? text.ToString() : "No errored downloads.";
+    }
+
 
     static string FormatFileSize(long bytes)
     {
@@ -235,6 +324,9 @@ class Program
         public double Percentage { get; set; }
         public long TotalSize { get; set; }
         public long DownloadedSize { get; set; }
+        public bool IsCompleted { get; set; }
+        public bool HasError { get; set; }
+
 
         public Progress(string fileName)
         {
